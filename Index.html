@@ -1,164 +1,341 @@
-<!DOCTYPE html><html lang="en">
+<!DOCTYPE html>
+<html lang="en">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Monthly Money Forecast</title>
-  <link rel="manifest" href="manifest.json">
-  <meta name="theme-color" content="#2563eb">
-  <link rel="apple-touch-icon" href="icon-192.png">
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
-<body class="bg-gray-100 min-h-screen flex items-center justify-center">
-  <div class="bg-white p-6 rounded-2xl shadow-lg w-full max-w-lg">
-    <h1 class="text-2xl font-bold mb-4">Monthly Money Forecast</h1><label class="block mb-2">Current Balance ($)</label>
-<input id="balance" type="number" class="w-full mb-4 p-2 border rounded" />
+<body class="bg-gray-100 min-h-screen p-4">
 
-<h2 class="font-semibold mb-2">Income Sources</h2>
-<div id="incomeList" class="space-y-2 mb-2"></div>
-<button onclick="addIncome()" class="text-blue-600 mb-4">+ Add Income Source</button>
+  <div class="bg-white p-6 rounded-2xl shadow-lg max-w-4xl mx-auto">
+    <h1 class="text-2xl font-bold mb-4">Money Forecast</h1>
 
-<h2 class="font-semibold mb-2">Bills / Expenses</h2>
-<div id="expenseList" class="space-y-2 mb-2"></div>
-<button onclick="addExpense()" class="text-blue-600 mb-4">+ Add Expense</button>
+    <!-- Menu Tabs -->
+    <div class="flex space-x-2 mb-6">
+      <button onclick="showTab('dashboard')" id="tab-dashboard" class="px-4 py-2 rounded-lg bg-blue-600 text-white">Dashboard</button>
+      <button onclick="showTab('chartTab')" id="tab-chartTab" class="px-4 py-2 rounded-lg bg-gray-200">Chart</button>
+      <button onclick="showTab('calendarTab')" id="tab-calendarTab" class="px-4 py-2 rounded-lg bg-gray-200">Calendar</button>
+    </div>
 
-<label class="block mb-2">Forecast Months</label>
-<input id="months" type="number" value="6" class="w-full mb-4 p-2 border rounded" />
+    <!-- Dashboard Tab -->
+    <div id="dashboard">
+      <label class="block mb-2">Current Balance ($)</label>
+      <input id="balance" type="number" class="w-full mb-4 p-2 border rounded" />
 
-<button onclick="calculate()" class="w-full bg-blue-600 text-white p-2 rounded-xl font-semibold hover:bg-blue-700">Calculate Forecast</button>
+      <h2 class="font-semibold mb-2">Income</h2>
+      <div id="incomeList" class="space-y-2 mb-4 border rounded-lg p-2 bg-gray-50"></div>
+      <button onclick="addIncome()" class="text-blue-600 mb-6">+ Add Income</button>
 
-<div id="results" class="mt-6"></div>
-<canvas id="chart" class="mt-6"></canvas>
+      <h2 class="font-semibold mb-2">Bills / Expenses</h2>
+      <div id="expenseList" class="space-y-2 mb-4 border rounded-lg p-2 bg-gray-50"></div>
+      <button onclick="addExpense()" class="text-blue-600 mb-6">+ Add Bill</button>
 
-  </div><script>
-let chart;
+      <label class="block mb-2">Forecast Months</label>
+      <input id="months" type="number" value="6" class="w-full mb-6 p-2 border rounded" />
 
-function addIncome(name = '', amount = '', frequency = 'monthly', day = 1) {
+      <button onclick="computeForecast()" class="w-full bg-blue-600 text-white p-3 rounded-xl font-semibold">Calculate Forecast</button>
+
+      <div id="results" class="mt-6">
+        <h2 class="text-lg font-semibold mb-2">End of Month Savings Forecast</h2>
+        <ul id="monthSummary" class="space-y-1 text-sm"></ul>
+      </div>
+    </div>
+
+    <!-- Chart Tab -->
+    <div id="chartTab" class="hidden">
+      <canvas id="chart" style="height:300px;"></canvas>
+      <canvas id="savingsChart" style="height:300px;"></canvas>
+    </div>
+
+    <!-- Calendar Tab -->
+    <div id="calendarTab" class="hidden">
+      <div class="flex justify-between items-center mb-2">
+        <button onclick="prevMonth()" class="text-blue-600">◀</button>
+        <h2 id="calendarMonthYear" class="text-lg font-semibold"></h2>
+        <button onclick="nextMonth()" class="text-blue-600">▶</button>
+      </div>
+      <div id="calendarHeaders" class="grid grid-cols-7 gap-1 font-semibold text-center mb-1"></div>
+      <div id="calendar" class="grid grid-cols-7 gap-1"></div>
+    </div>
+
+    <!-- Day Detail Modal -->
+    <div id="dayModal" class="fixed inset-0 bg-black bg-opacity-40 hidden items-end justify-center z-50">
+      <div class="bg-white w-full max-w-md rounded-t-2xl p-4">
+        <div class="flex justify-between items-center mb-2">
+          <h3 id="modalDate" class="font-semibold text-lg"></h3>
+          <button onclick="closeDayModal()" class="text-gray-500">✕</button>
+        </div>
+        <div class="space-y-2 text-sm">
+          <div><strong>Starting Balance:</strong> $<span id="modalStart"></span></div>
+          <div>
+            <strong>Income</strong>
+            <ul id="modalIncome" class="list-disc ml-4"></ul>
+          </div>
+          <div>
+            <strong>Bills</strong>
+            <ul id="modalBills" class="list-disc ml-4"></ul>
+          </div>
+          <div class="pt-2 border-t"><strong>Ending Balance:</strong> $<span id="modalEnd"></span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+<script>
+let chart, savingsChart;
+let dailyBalances = [];
+let calendarMonthOffset = 0;
+
+// --- Tab Switching ---
+function showTab(tabId) {
+  ['dashboard','chartTab','calendarTab'].forEach(id => {
+    document.getElementById(id).classList.add('hidden');
+    const btn = document.getElementById('tab-' + id);
+    btn.classList.remove('bg-blue-600','text-white');
+    btn.classList.add('bg-gray-200');
+  });
+  document.getElementById(tabId).classList.remove('hidden');
+  const btn = document.getElementById('tab-' + tabId);
+  btn.classList.add('bg-blue-600','text-white');
+  btn.classList.remove('bg-gray-200');
+
+  if(tabId === 'chartTab') renderCharts();
+  if(tabId === 'calendarTab') renderCalendar();
+}
+
+window.addEventListener('DOMContentLoaded', () => {
+  showTab('dashboard');
+  loadData();
+  if(document.querySelectorAll('#incomeList>div').length===0) addIncome();
+  if(document.querySelectorAll('#expenseList>div').length===0) addExpense();
+});
+
+// --- Add / Remove Rows ---
+function addIncome(data={}){
   const div = document.createElement('div');
-  div.className = 'flex gap-2';
-  div.innerHTML = `
-    <input placeholder="Source" value="${name}" class="flex-1 p-2 border rounded" />
-    <input type="number" placeholder="$" value="${amount}" class="w-20 p-2 border rounded" />
-    <select class="p-2 border rounded">
-      <option value="daily" ${frequency==='daily'?'selected':''}>Daily</option>
-      <option value="weekly" ${frequency==='weekly'?'selected':''}>Weekly</option>
-      <option value="biweekly" ${frequency==='biweekly'?'selected':''}>Bi-Weekly</option>
-      <option value="monthly" ${frequency==='monthly'?'selected':''}>Monthly</option>
-      <option value="yearly" ${frequency==='yearly'?'selected':''}>Yearly</option>
+  div.className='grid grid-cols-1 md:grid-cols-6 gap-2 items-center mb-1';
+  div.innerHTML=`
+    <input placeholder="Income name" class="income-name p-2 border rounded" value="${data.name||''}" />
+    <input type="number" placeholder="$" class="income-amount p-2 border rounded" value="${data.amount||''}" />
+    <input type="date" class="income-date p-2 border rounded" value="${data.date||''}" />
+    <select class="income-recurrence p-2 border rounded">
+      <option value="once">One-time</option>
+      <option value="weekly">Weekly</option>
+      <option value="biweekly">Bi-Weekly</option>
+      <option value="monthly">Monthly</option>
+      <option value="yearly">Yearly</option>
     </select>
-    <input type="number" min="1" max="31" placeholder="Day" value="${day}" class="w-16 p-2 border rounded" />
+    <button onclick="duplicateRow(this,'income')" class="text-blue-600 text-sm">Duplicate</button>
+    <button onclick="removeRow(this)" class="text-red-600 text-sm">Remove</button>
   `;
+  if(data.recurrence) div.querySelector('select').value=data.recurrence;
   document.getElementById('incomeList').appendChild(div);
+  div.querySelectorAll('input,select').forEach(el=>el.addEventListener('input',saveData));
 }
 
-function addExpense(name = '', amount = '', frequency = 'monthly', day = 1) {
-  const div = document.createElement('div');
-  div.className = 'flex gap-2';
-  div.innerHTML = `
-    <input placeholder="Bill" value="${name}" class="flex-1 p-2 border rounded" />
-    <input type="number" placeholder="$" value="${amount}" class="w-20 p-2 border rounded" />
-    <select class="p-2 border rounded">
-      <option value="daily" ${frequency==='daily'?'selected':''}>Daily</option>
-      <option value="weekly" ${frequency==='weekly'?'selected':''}>Weekly</option>
-      <option value="biweekly" ${frequency==='biweekly'?'selected':''}>Bi-Weekly</option>
-      <option value="monthly" ${frequency==='monthly'?'selected':''}>Monthly</option>
-      <option value="quarterly" ${frequency==='quarterly'?'selected':''}>Quarterly</option>
-      <option value="yearly" ${frequency==='yearly'?'selected':''}>Yearly</option>
+function addExpense(data={}){
+  const div=document.createElement('div');
+  div.className='grid grid-cols-1 md:grid-cols-6 gap-2 items-center mb-1';
+  div.innerHTML=`
+    <input placeholder="Bill name" class="expense-name p-2 border rounded" value="${data.name||''}" />
+    <input type="number" placeholder="$" class="expense-amount p-2 border rounded" value="${data.amount||''}" />
+    <input type="date" class="expense-date p-2 border rounded" value="${data.date||''}" />
+    <select class="expense-recurrence p-2 border rounded">
+      <option value="once">One-time</option>
+      <option value="weekly">Weekly</option>
+      <option value="biweekly">Bi-Weekly</option>
+      <option value="monthly">Monthly</option>
+      <option value="quarterly">Quarterly</option>
+      <option value="yearly">Yearly</option>
     </select>
-    <input type="number" min="1" max="31" placeholder="Day" value="${day}" class="w-16 p-2 border rounded" />
+    <button onclick="duplicateRow(this,'expense')" class="text-blue-600 text-sm">Duplicate</button>
+    <button onclick="removeRow(this)" class="text-red-600 text-sm">Remove</button>
   `;
+  if(data.recurrence) div.querySelector('select').value=data.recurrence;
   document.getElementById('expenseList').appendChild(div);
+  div.querySelectorAll('input,select').forEach(el=>el.addEventListener('input',saveData));
 }
 
-function saveData(data) {
-  localStorage.setItem('moneyForecast', JSON.stringify(data));
+function removeRow(btn){ btn.parentElement.remove(); saveData(); }
+function duplicateRow(btn,type){
+  const row=btn.parentElement;
+  const data={ 
+    name:row.children[0].value, 
+    amount:row.children[1].value, 
+    date:row.children[2].value, 
+    recurrence:row.children[3].value 
+  };
+  type==='income'?addIncome(data):addExpense(data);
 }
 
-function loadData() {
-  const data = JSON.parse(localStorage.getItem('moneyForecast'));
-  if (!data) return;
-  balance.value = data.balance;
-  months.value = data.months;
-  data.incomes.forEach(i => addIncome(i.name, i.amount, i.frequency, i.day));
-  data.expenses.forEach(e => addExpense(e.name, e.amount, e.frequency, e.day));
+// --- Save / Load ---
+function saveData(){
+  const data={
+    balance: balance.value,
+    months: months.value,
+    incomes: [...document.querySelectorAll('#incomeList>div')].map(r=>({
+      name:r.children[0].value,
+      amount:r.children[1].value,
+      date:r.children[2].value,
+      recurrence:r.children[3].value
+    })),
+    expenses: [...document.querySelectorAll('#expenseList>div')].map(r=>({
+      name:r.children[0].value,
+      amount:r.children[1].value,
+      date:r.children[2].value,
+      recurrence:r.children[3].value
+    }))
+  };
+  localStorage.setItem('moneyForecastData',JSON.stringify(data));
 }
 
-function calculate() {
-  const balanceVal = parseFloat(balance.value) || 0;
-  const monthsVal = parseInt(months.value) || 0;
+function loadData(){ 
+  const saved=localStorage.getItem('moneyForecastData'); 
+  if(!saved) return; 
+  const data=JSON.parse(saved); 
+  balance.value=data.balance||''; 
+  months.value=data.months||6; 
+  document.getElementById('incomeList').innerHTML=''; 
+  document.getElementById('expenseList').innerHTML=''; 
+  data.incomes?.forEach(i=>addIncome(i)); 
+  data.expenses?.forEach(e=>addExpense(e)); 
+}
 
-  const incomes = [...incomeList.children].map(r => ({
-    amount: parseFloat(r.children[1].value) || 0,
-    frequency: r.children[2].value,
-    day: parseInt(r.children[3].value) || 1
+// --- Forecast Computation ---
+function computeForecast(){
+  saveData();
+  const monthCount=parseInt(months.value)||6;
+  const currentBalance=parseFloat(balance.value)||0;
+  const incomes=[...document.querySelectorAll('#incomeList>div')].map(r=>({
+    name:r.children[0].value,
+    amount:parseFloat(r.children[1].value)||0,
+    date:r.children[2].value?r.children[2].value:new Date().toISOString().split('T')[0],
+    recurrence:r.children[3].value
+  }));
+  const expenses=[...document.querySelectorAll('#expenseList>div')].map(r=>({
+    name:r.children[0].value,
+    amount:parseFloat(r.children[1].value)||0,
+    date:r.children[2].value?r.children[2].value:new Date().toISOString().split('T')[0],
+    recurrence:r.children[3].value
   }));
 
-  const expenses = [...expenseList.children].map(r => ({
-    amount: parseFloat(r.children[1].value) || 0,
-    frequency: r.children[2].value,
-    day: parseInt(r.children[3].value) || 1
-  }));
+  dailyBalances=[];
+  let balanceTracker=currentBalance;
+  const today=new Date();
+  let monthsArr=[],monthBalances=[],monthSavings=[];
 
-  let current = balanceVal;
-  let balances = [];
-  let labels = [];
-  let html = '<h2 class="text-lg font-semibold mb-2">Forecast</h2><ul>';
-
-  let dailyBalances = [];
-  let dayCounter = 1;
-
-  function transactionsForDay(month, day) {
-    let total = 0;
-    incomes.forEach(i => {
-      if (i.day === day && (
-        i.frequency==='daily' ||
-        (i.frequency==='weekly' && day % 7 === 0) ||
-        (i.frequency==='biweekly' && day % 14 === 0) ||
-        (i.frequency==='monthly') ||
-        (i.frequency==='yearly' && month % 12 === 0))) {
-          total += i.amount;
-      }
-    });
-    expenses.forEach(e => {
-      if (e.day === day && (
-        e.frequency==='daily' ||
-        (e.frequency==='weekly' && day % 7 === 0) ||
-        (e.frequency==='biweekly' && day % 14 === 0) ||
-        (e.frequency==='monthly') ||
-        (e.frequency==='quarterly' && month % 3 === 0) ||
-        (e.frequency==='yearly' && month % 12 === 0))) {
-          total -= e.amount;
-      }
-    });
-    return total;
-  }
-
-  for (let m = 1; m <= monthsVal; m++) {
-    const daysInMonth = 30;
-    for (let d = 1; d <= daysInMonth; d++) {
-      current += transactionsForDay(m, d);
-      dailyBalances.push(current.toFixed(2));
-      labels.push('M'+m+'D'+d);
+  for(let m=0;m<monthCount;m++){
+    const monthStart=new Date(today.getFullYear(),today.getMonth()+m,1);
+    const daysInMonth=new Date(monthStart.getFullYear(),monthStart.getMonth()+1,0).getDate();
+    const monthStartBalance=balanceTracker;
+    for(let d=1;d<=daysInMonth;d++){
+      const date=new Date(monthStart.getFullYear(),monthStart.getMonth(),d);
+      let dayIncome=0,dayExpense=0;
+      incomes.forEach(i=>{ if(occursOn(new Date(i.date),i.recurrence,date)){ balanceTracker+=i.amount; dayIncome+=i.amount; } });
+      expenses.forEach(e=>{ if(occursOn(new Date(e.date),e.recurrence,date)){ balanceTracker-=e.amount; dayExpense+=e.amount; } });
+      dailyBalances.push({date:date,balance:balanceTracker,income:dayIncome,expense:dayExpense});
     }
-    html += `<li>End of Month ${m}: <strong>$${current.toFixed(2)}</strong></li>`;
+    monthsArr.push(monthStart.toLocaleString('default',{month:'short',year:'numeric'}));
+    monthBalances.push(balanceTracker.toFixed(2));
+    monthSavings.push((balanceTracker-monthStartBalance).toFixed(2));
   }
 
-  html += '</ul>';
-  results.innerHTML = html;
+  const monthSummaryEl=document.getElementById('monthSummary'); 
+  monthSummaryEl.innerHTML='';
+  monthsArr.forEach((m,i)=>{
+    const li=document.createElement('li'); 
+    li.innerHTML=`<strong>${m}:</strong> $${monthBalances[i]} <span class="text-gray-500">(Saved $${monthSavings[i]})</span>`; 
+    monthSummaryEl.appendChild(li);
+  });
 
-  if (chart) chart.destroy();
-  chart = new Chart(chartEl, { type: 'line', data: { labels, datasets: [{ label: 'Balance by Day', data: dailyBalances }] }});
+  return {labels:monthsArr,balances:monthBalances,monthlySavings:monthSavings,dailyBalances};
+}
 
-  saveData({
-    balance: balanceVal,
-    months: monthsVal,
-    incomes: incomes.map(i=>({name:'', amount:i.amount, frequency:i.frequency, day:i.day})),
-    expenses: expenses.map(e=>({name:'', amount:e.amount, frequency:e.frequency, day:e.day}))
+// --- Charts ---
+function renderCharts(){
+  const data=computeForecast();
+  if(chart) chart.destroy();
+  chart=new Chart(document.getElementById('chart'),{
+    type:'line',
+    data:{
+      labels:data.labels,
+      datasets:[{label:'Balance',data:data.balances,tension:0.3,borderColor:'blue',backgroundColor:'rgba(0,0,255,0.1)'}]
+    },
+    options:{responsive:true}
+  });
+
+  if(savingsChart) savingsChart.destroy();
+  savingsChart=new Chart(document.getElementById('savingsChart'),{
+    type:'bar',
+    data:{labels:data.labels,datasets:[{label:'Monthly Savings',data:data.monthlySavings,backgroundColor:'green'}]},
+    options:{responsive:true}
   });
 }
 
-addIncome();
-addExpense();
-loadData();
-</script></body>
+// --- Calendar ---
+function renderCalendar(){
+  computeForecast();
+  const displayedMonth=new Date();
+  displayedMonth.setMonth(displayedMonth.getMonth()+calendarMonthOffset);
+  const monthStart=new Date(displayedMonth.getFullYear(),displayedMonth.getMonth(),1);
+  const daysInMonth=new Date(displayedMonth.getFullYear(),displayedMonth.getMonth()+1,0).getDate();
+
+  document.getElementById('calendarMonthYear').textContent=monthStart.toLocaleString('default',{month:'long',year:'numeric'});
+  const headers=document.getElementById('calendarHeaders'); 
+  headers.innerHTML='';
+  ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].forEach(day=>{ 
+    const h=document.createElement('div'); 
+    h.textContent=day; 
+    headers.appendChild(h); 
+  });
+
+  const calendar=document.getElementById('calendar'); 
+  calendar.innerHTML='';
+  for(let d=1;d<=daysInMonth;d++){
+    const date=new Date(displayedMonth.getFullYear(),displayedMonth.getMonth(),d);
+    const dayData=dailyBalances.find(day=>day.date.toDateString()===date.toDateString())||{income:0,expense:0,balance:0};
+    const cell=document.createElement('div'); 
+    cell.className='border h-32 p-1 flex flex-col overflow-hidden hover:bg-blue-50 cursor-pointer';
+    cell.innerHTML=`<div class="text-right font-semibold text-gray-700">${d}</div>
+      ${dayData.income>0?`<div class="text-green-600 text-xs truncate">+ $${dayData.income}</div>`:''}
+      ${dayData.expense>0?`<div class="text-red-600 text-xs truncate">- $${dayData.expense}</div>`:''}
+      <div class="text-sm mt-auto font-semibold">$${dayData.balance.toFixed(2)}</div>`;
+    cell.onclick=()=>showDayDetail(date);
+    calendar.appendChild(cell);
+  }
+}
+function prevMonth(){ calendarMonthOffset--; renderCalendar(); }
+function nextMonth(){ calendarMonthOffset++; renderCalendar(); }
+
+// --- Recurrence Check ---
+function occursOn(start,rec,date){
+  if(date < start) return false;
+  const diff=Math.floor((date - start) / (1000*60*60*24));
+  switch(rec){
+    case 'once': return diff===0;
+    case 'weekly': return diff%7===0;
+    case 'biweekly': return diff%14===0;
+    case 'monthly': return date.getDate()===start.getDate();
+    case 'quarterly': return diff%90===0;
+    case 'yearly': return date.getDate()===start.getDate() && date.getMonth()===start.getMonth();
+    default: return false;
+  }
+}
+
+// --- Day Modal ---
+function showDayDetail(date){
+  const dayData=dailyBalances.find(d=>d.date.toDateString()===date.toDateString())||{income:0,expense:0,balance:0};
+  document.getElementById('modalDate').textContent=date.toDateString();
+  document.getElementById('modalStart').textContent=(dayData.balance - dayData.income + dayData.expense).toFixed(2);
+  document.getElementById('modalIncome').innerHTML=dayData.income ? `<li>$${dayData.income}</li>` : '<li>None</li>';
+  document.getElementById('modalBills').innerHTML=dayData.expense ? `<li>$${dayData.expense}</li>` : '<li>None</li>';
+  document.getElementById('modalEnd').textContent=dayData.balance.toFixed(2);
+  document.getElementById('dayModal').classList.remove('hidden');
+}
+function closeDayModal(){ document.getElementById('dayModal').classList.add('hidden'); }
+
+</script>
+</body>
 </html>
