@@ -1,0 +1,164 @@
+<!DOCTYPE html><html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Monthly Money Forecast</title>
+  <link rel="manifest" href="manifest.json">
+  <meta name="theme-color" content="#2563eb">
+  <link rel="apple-touch-icon" href="icon-192.png">
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body class="bg-gray-100 min-h-screen flex items-center justify-center">
+  <div class="bg-white p-6 rounded-2xl shadow-lg w-full max-w-lg">
+    <h1 class="text-2xl font-bold mb-4">Monthly Money Forecast</h1><label class="block mb-2">Current Balance ($)</label>
+<input id="balance" type="number" class="w-full mb-4 p-2 border rounded" />
+
+<h2 class="font-semibold mb-2">Income Sources</h2>
+<div id="incomeList" class="space-y-2 mb-2"></div>
+<button onclick="addIncome()" class="text-blue-600 mb-4">+ Add Income Source</button>
+
+<h2 class="font-semibold mb-2">Bills / Expenses</h2>
+<div id="expenseList" class="space-y-2 mb-2"></div>
+<button onclick="addExpense()" class="text-blue-600 mb-4">+ Add Expense</button>
+
+<label class="block mb-2">Forecast Months</label>
+<input id="months" type="number" value="6" class="w-full mb-4 p-2 border rounded" />
+
+<button onclick="calculate()" class="w-full bg-blue-600 text-white p-2 rounded-xl font-semibold hover:bg-blue-700">Calculate Forecast</button>
+
+<div id="results" class="mt-6"></div>
+<canvas id="chart" class="mt-6"></canvas>
+
+  </div><script>
+let chart;
+
+function addIncome(name = '', amount = '', frequency = 'monthly', day = 1) {
+  const div = document.createElement('div');
+  div.className = 'flex gap-2';
+  div.innerHTML = `
+    <input placeholder="Source" value="${name}" class="flex-1 p-2 border rounded" />
+    <input type="number" placeholder="$" value="${amount}" class="w-20 p-2 border rounded" />
+    <select class="p-2 border rounded">
+      <option value="daily" ${frequency==='daily'?'selected':''}>Daily</option>
+      <option value="weekly" ${frequency==='weekly'?'selected':''}>Weekly</option>
+      <option value="biweekly" ${frequency==='biweekly'?'selected':''}>Bi-Weekly</option>
+      <option value="monthly" ${frequency==='monthly'?'selected':''}>Monthly</option>
+      <option value="yearly" ${frequency==='yearly'?'selected':''}>Yearly</option>
+    </select>
+    <input type="number" min="1" max="31" placeholder="Day" value="${day}" class="w-16 p-2 border rounded" />
+  `;
+  document.getElementById('incomeList').appendChild(div);
+}
+
+function addExpense(name = '', amount = '', frequency = 'monthly', day = 1) {
+  const div = document.createElement('div');
+  div.className = 'flex gap-2';
+  div.innerHTML = `
+    <input placeholder="Bill" value="${name}" class="flex-1 p-2 border rounded" />
+    <input type="number" placeholder="$" value="${amount}" class="w-20 p-2 border rounded" />
+    <select class="p-2 border rounded">
+      <option value="daily" ${frequency==='daily'?'selected':''}>Daily</option>
+      <option value="weekly" ${frequency==='weekly'?'selected':''}>Weekly</option>
+      <option value="biweekly" ${frequency==='biweekly'?'selected':''}>Bi-Weekly</option>
+      <option value="monthly" ${frequency==='monthly'?'selected':''}>Monthly</option>
+      <option value="quarterly" ${frequency==='quarterly'?'selected':''}>Quarterly</option>
+      <option value="yearly" ${frequency==='yearly'?'selected':''}>Yearly</option>
+    </select>
+    <input type="number" min="1" max="31" placeholder="Day" value="${day}" class="w-16 p-2 border rounded" />
+  `;
+  document.getElementById('expenseList').appendChild(div);
+}
+
+function saveData(data) {
+  localStorage.setItem('moneyForecast', JSON.stringify(data));
+}
+
+function loadData() {
+  const data = JSON.parse(localStorage.getItem('moneyForecast'));
+  if (!data) return;
+  balance.value = data.balance;
+  months.value = data.months;
+  data.incomes.forEach(i => addIncome(i.name, i.amount, i.frequency, i.day));
+  data.expenses.forEach(e => addExpense(e.name, e.amount, e.frequency, e.day));
+}
+
+function calculate() {
+  const balanceVal = parseFloat(balance.value) || 0;
+  const monthsVal = parseInt(months.value) || 0;
+
+  const incomes = [...incomeList.children].map(r => ({
+    amount: parseFloat(r.children[1].value) || 0,
+    frequency: r.children[2].value,
+    day: parseInt(r.children[3].value) || 1
+  }));
+
+  const expenses = [...expenseList.children].map(r => ({
+    amount: parseFloat(r.children[1].value) || 0,
+    frequency: r.children[2].value,
+    day: parseInt(r.children[3].value) || 1
+  }));
+
+  let current = balanceVal;
+  let balances = [];
+  let labels = [];
+  let html = '<h2 class="text-lg font-semibold mb-2">Forecast</h2><ul>';
+
+  let dailyBalances = [];
+  let dayCounter = 1;
+
+  function transactionsForDay(month, day) {
+    let total = 0;
+    incomes.forEach(i => {
+      if (i.day === day && (
+        i.frequency==='daily' ||
+        (i.frequency==='weekly' && day % 7 === 0) ||
+        (i.frequency==='biweekly' && day % 14 === 0) ||
+        (i.frequency==='monthly') ||
+        (i.frequency==='yearly' && month % 12 === 0))) {
+          total += i.amount;
+      }
+    });
+    expenses.forEach(e => {
+      if (e.day === day && (
+        e.frequency==='daily' ||
+        (e.frequency==='weekly' && day % 7 === 0) ||
+        (e.frequency==='biweekly' && day % 14 === 0) ||
+        (e.frequency==='monthly') ||
+        (e.frequency==='quarterly' && month % 3 === 0) ||
+        (e.frequency==='yearly' && month % 12 === 0))) {
+          total -= e.amount;
+      }
+    });
+    return total;
+  }
+
+  for (let m = 1; m <= monthsVal; m++) {
+    const daysInMonth = 30;
+    for (let d = 1; d <= daysInMonth; d++) {
+      current += transactionsForDay(m, d);
+      dailyBalances.push(current.toFixed(2));
+      labels.push('M'+m+'D'+d);
+    }
+    html += `<li>End of Month ${m}: <strong>$${current.toFixed(2)}</strong></li>`;
+  }
+
+  html += '</ul>';
+  results.innerHTML = html;
+
+  if (chart) chart.destroy();
+  chart = new Chart(chartEl, { type: 'line', data: { labels, datasets: [{ label: 'Balance by Day', data: dailyBalances }] }});
+
+  saveData({
+    balance: balanceVal,
+    months: monthsVal,
+    incomes: incomes.map(i=>({name:'', amount:i.amount, frequency:i.frequency, day:i.day})),
+    expenses: expenses.map(e=>({name:'', amount:e.amount, frequency:e.frequency, day:e.day}))
+  });
+}
+
+addIncome();
+addExpense();
+loadData();
+</script></body>
+</html>
