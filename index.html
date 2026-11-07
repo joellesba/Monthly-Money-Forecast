@@ -4,6 +4,11 @@
 <head>
 <meta charset="utf-8"/>
 <meta content="width=device-width, initial-scale=1, viewport-fit=cover" name="viewport"/>
+<meta content="#166534" name="theme-color"/>
+<meta content="yes" name="mobile-web-app-capable"/>
+<meta content="yes" name="apple-mobile-web-app-capable"/>
+<meta content="black-translucent" name="apple-mobile-web-app-status-bar-style"/>
+<meta content="Money Forecast" name="apple-mobile-web-app-title"/>
 <title>Money Forecast App</title>
 <script src="https://cdn.tailwindcss.com">
 // Sync dashboard forecast toggle state after all functions are defined
@@ -192,9 +197,43 @@ function _mm_getDebtPlanPaymentDay(){
     font-weight: 600;
   }
 </style>
+<script>
+// ---------- Hide browser address bar ----------
+// A normal web page can't hide Chrome's address bar by itself. Two things are done here:
+//  1) Installed/"Add to Home screen" launches run standalone (no address bar) via an inline manifest.
+//  2) In a regular tab, the first tap asks the browser for fullscreen (works on Android Chrome).
+(function(){
+  try{
+    const manifest = {
+      name: 'Money Forecast', short_name: 'Money Forecast',
+      display: 'standalone', background_color: '#166534', theme_color: '#166534',
+      start_url: location.href.split('#')[0]
+    };
+    const link = document.createElement('link');
+    link.rel = 'manifest';
+    link.href = URL.createObjectURL(new Blob([JSON.stringify(manifest)], {type:'application/manifest+json'}));
+    document.head.appendChild(link);
+  }catch(e){}
+
+  const isStandalone = ()=> (window.matchMedia && matchMedia('(display-mode: standalone)').matches) || window.navigator.standalone === true;
+  let tried = false;
+  function goFullscreen(){
+    if(tried || isStandalone()) return;
+    const el = document.documentElement;
+    const req = el.requestFullscreen || el.webkitRequestFullscreen;
+    if(!req || document.fullscreenElement) return;
+    tried = true;
+    try{
+      const r = req.call(el, {navigationUI:'hide'});
+      if(r && r.catch) r.catch(()=>{});
+    }catch(e){}
+  }
+  ['pointerup','touchend','click'].forEach(ev=>document.addEventListener(ev, goFullscreen, {once:false, passive:true}));
+})();
+</script>
 </head>
 <body class="bg-gray-100 overflow-x-hidden">
-<div class="flex h-screen">
+<div class="flex min-h-screen">
 <!-- Side Menu -->
 <div class="fixed inset-y-0 left-0 w-64 bg-green-800 text-white shadow transform -translate-x-full transition-transform duration-300 z-50" id="sideMenu">
 <h2 class="font-bold text-xl p-4 border-b border-green-700 text-white">Menu</h2>
@@ -212,8 +251,8 @@ function _mm_getDebtPlanPaymentDay(){
 <div class="hidden fixed inset-0 bg-black/30 z-40" id="menuBackdrop" onclick="toggleMenu(true)"></div>
 <!-- Main Content -->
 <div class="flex-1 relative mx-auto w-full max-w-[430px] sm:max-w-none mm-min-w-0">
-<!-- Top Bar -->
-<div class="flex items-center p-4 bg-green-800 text-white shadow">
+<!-- Top Bar (frozen) -->
+<div class="flex items-center p-4 bg-green-800 text-white shadow sticky top-0 z-30" id="topBar" style="padding-top:calc(1rem + env(safe-area-inset-top, 0px));">
 <button class="p-2 rounded-full bg-green-700 mr-4" onclick="toggleMenu()">
 <svg class="h-6 w-6" fill="none" stroke="currentColor" viewbox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
 <path d="M4 6h16M4 12h16M4 18h16" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path>
@@ -256,6 +295,11 @@ function _mm_getDebtPlanPaymentDay(){
 <div class="text-xs text-green-600 whitespace-nowrap pt-1" id="dashboardSaveStatus"></div>
 </div>
 <div class="mt-1 text-xs text-gray-400" id="dashboardLastUpdated">Last updated: &mdash;</div>
+<div class="mt-1 text-xs text-green-700" id="dashboardAutoNote"></div>
+<label class="mt-2 flex items-center gap-2 text-xs text-gray-600">
+<input type="checkbox" id="autoAdjustToggle" onchange="_mm_setAutoAdjust(this.checked)"/>
+<span>Auto-adjust cash balances for bills &amp; income</span>
+</label>
 
 <div class="mt-4" id="dashSecCash">
 <div class="flex items-center justify-between mb-2">
@@ -2374,11 +2418,150 @@ function _mm_rollForwardLoanBalances(){
   return balancesChanged;
 }
 
+// ---------- Cash account roll-forward (income + bills) ----------
+// Each cash (debit) account remembers the last day it was brought up to date (balanceRolledThrough).
+// On open, income and bills dated after that day (up to and including today) are applied, using the
+// same rules as the forecast. Typing a balance yourself restarts from today.
+function _mm_localKey(d){
+  return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');
+}
+function _mm_autoAdjustEnabled(){
+  try{ return localStorage.getItem('mm_auto_adjust') !== 'off'; }catch(e){ return true; }
+}
+function _mm_markAccountBalanceEdited(a){
+  if(a && a.type==='debit') a.balanceRolledThrough = _mm_localKey(new Date());
+}
+
+function _mm_rollForwardAccountBalances(){
+  let changed = false, stamped = false;
+  try{
+    const debits = getDebitAccounts();
+    if(!debits.length) return false;
+
+    const now = new Date();
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const todayKey = _mm_localKey(today);
+
+    if(!_mm_autoAdjustEnabled()){
+      // Keep stamps fresh so turning it back on doesn't replay the paused period
+      debits.forEach(a=>{ if(a.balanceRolledThrough !== todayKey){ a.balanceRolledThrough = todayKey; stamped = true; } });
+      if(stamped) saveData();
+      return false;
+    }
+
+    // First run for an account: its balance is assumed current as of today
+    const pending = [];
+    debits.forEach(a=>{
+      if(!a.balanceRolledThrough){ a.balanceRolledThrough = todayKey; stamped = true; return; }
+      if(a.balanceRolledThrough < todayKey) pending.push(a);
+    });
+    if(!pending.length){ if(stamped) saveData(); return false; }
+
+    const fallbackId = debits[0].id;
+    const validDebit = (id)=> debits.some(a=>a.id===id) ? id : fallbackId;
+    const rolled = {}; pending.forEach(a=>{ rolled[a.id] = a.balanceRolledThrough; });
+    const delta = {}; pending.forEach(a=>{ delta[a.id] = 0; });
+    const cardDelta = {};   // credit account id -> total reduction from payments applied
+    const stmtDelta = {};   // credit account id -> reduction of last statement balance
+
+    // Window of days to apply: (earliest stamp, today]
+    let start = parseDate(pending.reduce((m,a)=> a.balanceRolledThrough < m ? a.balanceRolledThrough : m, todayKey));
+    const maxDays = 730;
+    const earliest = new Date(today.getFullYear(), today.getMonth(), today.getDate() - maxDays);
+    if(start < earliest) start = earliest;
+
+    const applies = (acctId, day)=> (acctId in rolled) && _mm_localKey(day) > rolled[acctId];
+    let incomeTotal = 0, billTotal = 0, daysApplied = 0;
+
+    for(let day = new Date(start.getFullYear(), start.getMonth(), start.getDate()+1); day <= today; day = new Date(day.getFullYear(), day.getMonth(), day.getDate()+1)){
+      daysApplied++;
+
+      (incomes||[]).forEach(i=>{
+        if(!i || i.enabled === false) return;
+        if(!occursOn(i, day)) return;
+        const acct = validDebit(i.accountId);
+        if(!applies(acct, day)) return;
+        const amt = parseFloat(i.amount)||0;
+        delta[acct] += amt; incomeTotal += amt;
+      });
+
+      (expenses||[]).forEach(e=>{
+        if(!e || e.enabled === false) return;
+        if(!occursOn(e, day)) return;
+        if(isPaidOccurrence(day, e.id)) return;
+        if((e.payMethod||'debit')==='credit' && e.creditAccountId) return; // handled via card due dates below
+        const acct = validDebit(e.debitAccountId);
+        if(!applies(acct, day)) return;
+        const amt = parseFloat(e.amount)||0;
+        delta[acct] -= amt; billTotal += amt;
+
+        // A payment toward a credit card lowers that card's owed balance too
+        const cardId = e._ccAccountId || e._linkedCreditAccountId;
+        if(cardId){
+          cardDelta[cardId] = (cardDelta[cardId]||0) + amt;
+          if(e._generatedByCCAutoBills && e._ccBillType === 'statement') stmtDelta[cardId] = (stmtDelta[cardId]||0) + amt;
+        }
+      });
+    }
+
+    // Bills paid with a credit card hit cash on the card's payment due date (same rule as the forecast)
+    const chargeStart = new Date(start.getFullYear(), start.getMonth(), start.getDate() - 70);
+    for(let day = chargeStart; day <= today; day = new Date(day.getFullYear(), day.getMonth(), day.getDate()+1)){
+      (expenses||[]).forEach(e=>{
+        if(!e || e.enabled === false) return;
+        if((e.payMethod||'debit')!=='credit' || !e.creditAccountId) return;
+        if(!occursOn(e, day)) return;
+        if(isPaidOccurrence(day, e.id)) return;
+        const cc = accounts.find(a=>a.id===e.creditAccountId && a.type==='credit');
+        if(!cc) return;
+        const due = computeCCPaymentDueDate(day, (cc.statementCloseDay!=null?cc.statementCloseDay:(cc.dueDay||1)), (cc.dueDay||1));
+        if(due > today) return;
+        const acct = validDebit(cc.payFromAccountId);
+        if(!applies(acct, due)) return;
+        const amt = parseFloat(e.amount)||0;
+        delta[acct] -= amt; billTotal += amt;
+      });
+    }
+
+    // Write results
+    pending.forEach(a=>{
+      const nb = Math.round(((parseFloat(a.currentBalance)||0) + delta[a.id]) * 100) / 100;
+      if(Math.abs(nb - (parseFloat(a.currentBalance)||0)) > 0.004) changed = true;
+      a.currentBalance = nb;
+      a.balanceRolledThrough = todayKey;
+      try{ const el = document.getElementById('dash_accbal_'+a.id); if(el) el.value = nb; }catch(err){}
+    });
+    Object.keys(cardDelta).forEach(id=>{
+      const card = accounts.find(a=>a.id===id && a.type==='credit');
+      if(!card) return;
+      card.currentBalance = Math.round(Math.max(0, (parseFloat(card.currentBalance)||0) - cardDelta[id]) * 100) / 100;
+      if(stmtDelta[id]) card.lastStatementBalance = Math.round(Math.max(0, (parseFloat(card.lastStatementBalance)||0) - stmtDelta[id]) * 100) / 100;
+      try{ const el = document.getElementById('dash_accbal_'+id); if(el) el.value = card.currentBalance; }catch(err){}
+      try{ const el2 = document.getElementById('dash_ccstmt_'+id); if(el2) el2.value = card.lastStatementBalance||0; }catch(err){}
+      changed = true;
+    });
+    try{ syncLinkedCreditCardDebtBalances(); }catch(e){}
+
+    const totalCash = getTotalDebitCash();
+    currentBalance = totalCash;
+    const balInput = document.getElementById('balance');
+    if(balInput) balInput.value = totalCash;
+
+    if(changed){
+      window._mm_autoAdjustNote = `Auto-adjusted for ${daysApplied} day${daysApplied===1?'':'s'}: +${money(incomeTotal)} income, \u2212${money(billTotal)} bills`;
+    }
+    saveData();
+  }catch(e){ console.error('rollForwardAccountBalances failed', e); }
+  return changed;
+}
+
 // Re-check when the app comes back to the foreground (e.g., left open overnight / across a due date)
 document.addEventListener('visibilitychange', ()=>{
   if(document.visibilityState !== 'visible') return;
   try{
-    if(_mm_rollForwardLoanBalances()){
+    const _loansChanged = _mm_rollForwardLoanBalances();
+    const _acctsChanged = _mm_rollForwardAccountBalances();
+    if(_loansChanged || _acctsChanged){
       try{ computeForecast(); }catch(e){}
       try{ renderDashboard(); }catch(e){}
       try{ renderDebtPlanner(); }catch(e){}
@@ -2463,6 +2646,7 @@ function loadData(){
   });
 
   try{ _mm_rollForwardLoanBalances(); }catch(e){}
+  try{ _mm_rollForwardAccountBalances(); }catch(e){}
 
   document.getElementById('balance').value = currentBalance;
 }
@@ -2908,7 +3092,21 @@ function renderDashboardBalanceInputs(){
   _mm_showBalancesLastUpdated();
 }
 
+function _mm_setAutoAdjust(on){
+  try{ localStorage.setItem('mm_auto_adjust', on ? 'on' : 'off'); }catch(e){}
+  if(on){
+    // Don't replay the paused period: treat balances as current as of today
+    getDebitAccounts().forEach(a=>_mm_markAccountBalanceEdited(a));
+    saveData();
+  }
+  _mm_showBalancesLastUpdated();
+}
+
 function _mm_showBalancesLastUpdated(){
+  const note = document.getElementById('dashboardAutoNote');
+  if(note) note.textContent = (_mm_autoAdjustEnabled() && window._mm_autoAdjustNote) ? window._mm_autoAdjustNote : '';
+  const tg = document.getElementById('autoAdjustToggle');
+  if(tg) tg.checked = _mm_autoAdjustEnabled();
   const el = document.getElementById('dashboardLastUpdated');
   if(!el) return;
   let ts = window._mm_balancesUpdatedAt;
@@ -2964,7 +3162,10 @@ function onDashboardBalancesChanged(){
       const balEl = document.getElementById('dash_accbal_'+a.id);
       if(balEl){
         const v = parseFloat(balEl.value||'0')||0;
-        if(isFinite(v)) a.currentBalance = v;
+        if(isFinite(v)){
+          if(Math.abs((parseFloat(a.currentBalance)||0) - v) > 0.004) _mm_markAccountBalanceEdited(a);
+          a.currentBalance = v;
+        }
       }
       if(a && a.type==='credit'){
         const lsEl = document.getElementById('dash_ccstmt_'+a.id);
@@ -3152,7 +3353,9 @@ function saveAccountModal(){
   a.name = document.getElementById('accountName').value || 'Account';
   a.type = document.getElementById('accountType').value;
 
-  a.currentBalance = parseFloat(document.getElementById('accountCurrentBalance').value)||0;
+  { const _nb = parseFloat(document.getElementById('accountCurrentBalance').value)||0;
+    if(Math.abs((parseFloat(a.currentBalance)||0) - _nb) > 0.004) _mm_markAccountBalanceEdited(a);
+    a.currentBalance = _nb; }
 
   if(a.type === 'credit'){
     a.dueDay = clamp(parseInt(document.getElementById('accountDueDay').value||'1',10),1,28);
