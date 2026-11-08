@@ -85,6 +85,79 @@ function _mm_getDebtPlanPaymentDay(){
 
 </script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script>
+/* Money Forecast offline chart fallback.
+   Chart.js is preferred when available. If its CDN is unavailable (for example,
+   when the app is offline), this small canvas renderer keeps both app charts
+   working without preventing the rest of the app from starting. */
+(function(){
+  if (typeof window.Chart !== 'undefined') return;
+  function OfflineChart(ctx, config){
+    this.ctx = ctx;
+    this.canvas = ctx && ctx.canvas;
+    this.config = config || {};
+    this.data = this.config.data || {labels:[], datasets:[]};
+    this._meta = {data:[]};
+    this.update();
+  }
+  OfflineChart.prototype.destroy = function(){
+    if(this.ctx && this.canvas) this.ctx.clearRect(0,0,this.canvas.width,this.canvas.height);
+    this._meta.data = [];
+  };
+  OfflineChart.prototype.getDatasetMeta = function(){ return this._meta; };
+  OfflineChart.prototype.update = function(){
+    var ctx=this.ctx, canvas=this.canvas, cfg=this.config, type=cfg.type;
+    if(!ctx || !canvas) return;
+    var w=canvas.width, h=canvas.height;
+    ctx.clearRect(0,0,w,h);
+    var ds=(this.data.datasets && this.data.datasets[0]) || {};
+    var values=(ds.data || []).map(function(v){return Number(v)||0;});
+    var colors=Array.isArray(ds.backgroundColor)?ds.backgroundColor:[];
+    if(type==='pie' || type==='doughnut'){
+      var total=values.reduce(function(a,b){return a+b;},0);
+      var cx=w/2, cy=h/2, radius=Math.max(10,Math.min(w,h)*0.39), angle=-Math.PI/2;
+      this._meta.data=[];
+      values.forEach(function(v,i){
+        var next=angle+(total>0?(Math.max(0,v)/total)*Math.PI*2:0);
+        var arc={x:cx,y:cy,startAngle:angle,endAngle:next,outerRadius:radius};
+        this._meta.data.push(arc);
+        if(v>0){
+          ctx.beginPath(); ctx.moveTo(cx,cy); ctx.arc(cx,cy,radius,angle,next); ctx.closePath();
+          ctx.fillStyle=colors[i] || '#9CA3AF'; ctx.fill();
+          ctx.lineWidth=Number(ds.borderWidth)||2; ctx.strokeStyle=ds.borderColor || '#fff'; ctx.stroke();
+        }
+        angle=next;
+      },this);
+      (cfg.plugins||[]).forEach(function(plugin){
+        if(plugin && typeof plugin.afterDatasetsDraw==='function') plugin.afterDatasetsDraw(this);
+      },this);
+      if(total<=0){ctx.fillStyle='#64748b';ctx.font='14px sans-serif';ctx.textAlign='center';ctx.fillText('No bill data',cx,cy);}
+      return;
+    }
+    // Simple line chart for the forecast. The chart remains readable offline;
+    // touch tooltips are not available in this lightweight fallback.
+    var pad={l:58,r:14,t:16,b:30}, plotW=Math.max(1,w-pad.l-pad.r), plotH=Math.max(1,h-pad.t-pad.b);
+    var min=values.length?Math.min.apply(null,values):0, max=values.length?Math.max.apply(null,values):1;
+    if(min===max){var bump=Math.abs(min)*0.05||1;min-=bump;max+=bump;}
+    function y(v){return pad.t+(max-v)/(max-min)*plotH;}
+    ctx.font='10px sans-serif'; ctx.textAlign='right'; ctx.textBaseline='middle'; ctx.fillStyle='#64748b';
+    for(var i=0;i<=4;i++){
+      var val=min+(max-min)*i/4, yy=y(val);
+      ctx.strokeStyle='#e5e7eb';ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(pad.l,yy);ctx.lineTo(w-pad.r,yy);ctx.stroke();
+      ctx.fillText('$'+Math.round(val).toLocaleString(),pad.l-7,yy);
+    }
+    if(values.length){
+      var xStep=values.length>1?plotW/(values.length-1):0;
+      ctx.beginPath(); values.forEach(function(v,i){var xx=pad.l+i*xStep;if(i===0)ctx.moveTo(xx,y(v));else ctx.lineTo(xx,y(v));});
+      ctx.strokeStyle=ds.borderColor||'#16a34a';ctx.lineWidth=Number(ds.borderWidth)||2;ctx.stroke();
+      if(ds.fill){ctx.lineTo(pad.l+(values.length-1)*xStep,pad.t+plotH);ctx.lineTo(pad.l,pad.t+plotH);ctx.closePath();ctx.fillStyle='rgba(34,197,94,0.12)';ctx.fill();}
+      var step=Math.max(1,Math.ceil(values.length/6));ctx.fillStyle='#64748b';ctx.textAlign='center';ctx.textBaseline='top';
+      (this.data.labels||[]).forEach(function(label,i){if(i%step===0||i===values.length-1)ctx.fillText(String(label),pad.l+i*xStep,h-pad.b+8);});
+    }else{ctx.fillStyle='#64748b';ctx.textAlign='center';ctx.fillText('Not enough forecast data',w/2,h/2);}
+  };
+  window.Chart = OfflineChart;
+})();
+</script>
 <style>
   /* ==============================
      Money Map – Pro “Bank / Fintech” Theme
@@ -7619,7 +7692,8 @@ function refreshSafeExtraUI(){
 </div>
 </div>
 </div>
+<script>try{ setForecastView(window._mm_forecastView || 'month'); }catch(e){}</script>
 </body>
 </html>
 
-<script>try{ setForecastView(window._mm_forecastView || 'month'); }catch(e){}<\/script>
+
