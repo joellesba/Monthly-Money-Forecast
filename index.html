@@ -1111,6 +1111,21 @@ function _mm_getDebtPlanPaymentDay(){
     -webkit-overflow-scrolling: touch;
   }
 
+
+/* ===== Keep the app clear of the phone's status bar and navigation bar =====
+   Android WebViews often report env(safe-area-inset-*) as 0 even when content
+   draws under the system bars, so these use a minimum fallback. */
+:root{
+  --mm-safe-top: max(env(safe-area-inset-top, 0px), 36px);
+  --mm-safe-bottom: max(env(safe-area-inset-bottom, 0px), 48px);
+}
+#topBar{ padding-top: calc(1rem + var(--mm-safe-top)) !important; }
+body{ padding-bottom: var(--mm-safe-bottom); }
+#sideMenu{ padding-top: var(--mm-safe-top); padding-bottom: var(--mm-safe-bottom); overflow-y:auto; }
+#importConfirmModal, #itemModal, #accountModal, #monthModal, #dayModal, #debtModal,
+#debtPlanMonthModal, #debtPlanPreviewModal, #principalScheduleModal{
+  padding-top: var(--mm-safe-top); padding-bottom: var(--mm-safe-bottom);
+}
 </style>
 <script>
 /* ===========================
