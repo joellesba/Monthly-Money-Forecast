@@ -283,6 +283,15 @@ function _mm_getDebtPlanPaymentDay(){
   #dashboard, #calendarTab, #multiMonthTab, #incomeTab, #billsTab, #accountsTab, #debtPlannerTab { width:100%; max-width:none; }
   #dailyForecastScroll { width:100%; }
   #calendarTab, #multiMonthTab { padding:6px 10px !important; }
+  #calcForecastBtn:disabled { background:#d1d5db !important; color:#6b7280 !important; cursor:not-allowed; opacity:1; }
+  /* Scrolling tabs: size to the real visible screen (below the actual top bar) so the bottom is reachable */
+  #accountsTab, #calendarTab, #debtPlannerTab, #backupTab {
+    height: calc(100vh - var(--mm-topbar-h, 64px)) !important;
+    height: calc(100dvh - var(--mm-topbar-h, 64px)) !important;
+    padding-bottom: calc(2rem + env(safe-area-inset-bottom, 0px)) !important;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior-y: contain;
+  }
   #calendarTab table, #multiMonthTab table { font-size:13px !important; line-height:1.3 !important; width:max-content; min-width:100%; }
   #calendarTab table th, #calendarTab table td,
   #multiMonthTab table th, #multiMonthTab table td {
@@ -292,7 +301,7 @@ function _mm_getDebtPlanPaymentDay(){
   #multiMonthTab table tbody tr { min-height:30px; }
   #calendarTab table th:first-child, #calendarTab table td:first-child { white-space:nowrap !important; min-width:130px; }
   #multiMonthTab table th:first-child, #multiMonthTab table td:first-child { white-space:nowrap !important; min-width:130px; }
-  #multiMonthTab, #calendarTab .overflow-auto { overflow-x:auto !important; -webkit-overflow-scrolling:touch; }
+  #multiMonthTab, #calendarTab .shadow.overflow-auto { overflow-x:auto !important; overflow-y:hidden !important; -webkit-overflow-scrolling:touch; }
   /* All other data tables: never let numbers collide; scroll sideways instead */
   #debtPlanPreviewModal table, #principalScheduleModal table, #debtModal table { table-layout:auto !important; width:max-content !important; min-width:100%; }
   #debtPlanPreviewModal th, #debtPlanPreviewModal td,
@@ -446,7 +455,7 @@ function _mm_getDebtPlanPaymentDay(){
 <!-- Kept for backwards compatibility (the forecast uses this as "today's cash") -->
 <label class="block hidden">Current Balance ($)</label>
 <input class="w-full p-2 mb-4 border rounded hidden" id="balance" inputmode="decimal" type="number"/>
-<button class="w-full bg-blue-600 text-white p-3 rounded-xl font-semibold" onclick="computeForecast(); navigator.vibrate?.(50);">Calculate Forecast</button>
+<button id="calcForecastBtn" class="w-full bg-blue-600 text-white p-3 rounded-xl font-semibold" onclick="computeForecast(); navigator.vibrate?.(50);">Calculate Forecast</button>
 <div class="mt-3 text-xs text-gray-500">
         Tip: For a bill paid by a credit card, choose <span class="font-semibold">Paid With: Credit Card</span>.
         The bill will impact your forecast on the card’s <span class="font-semibold">due date</span>, not the bill date.
@@ -7734,6 +7743,80 @@ function refreshSafeExtraUI(){
 </div>
 </div>
 <script>try{ setForecastView(window._mm_forecastView || 'month'); }catch(e){}</script>
+<script>
+// Grey out "Calculate Forecast" until something has changed since the last calculation
+(function(){
+  var baseline = null, btn = null, timer = null;
+  function val(id){ var el=document.getElementById(id); return el ? el.value : null; }
+  function signature(){
+    try{
+      var dash = {};
+      document.querySelectorAll('[id^="dash_accbal_"],[id^="dash_ccstmt_"]').forEach(function(el){ dash[el.id]=el.value; });
+      var strip = function(list){ return (list||[]).filter(function(e){
+        return e && !e._generatedByDebtPlan && !e._generatedByCCAutoBills; }); };
+      var accs = (typeof accounts!=='undefined' ? accounts : []).map(function(a){
+        var c = Object.assign({}, a); delete c.balanceRolledThrough; return c; });
+      var dp = (typeof debtPlan!=='undefined' && debtPlan) ? Object.assign({}, debtPlan) : {};
+      delete dp.generatedExpenseIds;
+      return JSON.stringify([
+        new Date().toDateString(),
+        val('balance'), dash,
+        accs,
+        typeof incomes!=='undefined' ? incomes : [],
+        strip(typeof expenses!=='undefined' ? expenses : []),
+        typeof debts!=='undefined' ? debts : [],
+        dp,
+        typeof paidOccurrences!=='undefined' ? paidOccurrences : null
+      ]);
+    }catch(e){ return null; }
+  }
+  function refresh(){
+    if(!btn) btn = document.getElementById('calcForecastBtn');
+    if(!btn) return;
+    var upToDate = (baseline !== null) && (signature() === baseline);
+    btn.disabled = upToDate;
+    btn.setAttribute('aria-disabled', upToDate ? 'true' : 'false');
+  }
+  function schedule(){ clearTimeout(timer); timer = setTimeout(refresh, 150); }
+  function install(){
+    var orig = window.computeForecast;
+    if(typeof orig !== 'function' || orig._mm_dirtyWrapped) return false;
+    var wrapped = function(){
+      var res = orig.apply(this, arguments);
+      // take the baseline after the calculation (and its own data syncing) has finished
+      setTimeout(function(){ baseline = signature(); refresh(); }, 200);
+      return res;
+    };
+    wrapped._mm_dirtyWrapped = true;
+    window.computeForecast = wrapped;
+    return true;
+  }
+  install();
+  document.addEventListener('DOMContentLoaded', function(){
+    install(); refresh();
+    ['input','change','click'].forEach(function(ev){ document.addEventListener(ev, schedule, true); });
+    setInterval(refresh, 1000);
+  });
+  window.addEventListener('load', function(){ install(); setTimeout(refresh, 500); });
+})();
+</script>
+<script>
+// Keep scrolling tabs sized to the visible screen below the real top bar height
+(function(){
+  function setTopbarH(){
+    var tb=document.getElementById('topBar');
+    if(!tb) return;
+    document.documentElement.style.setProperty('--mm-topbar-h', tb.getBoundingClientRect().height+'px');
+  }
+  setTopbarH();
+  document.addEventListener('DOMContentLoaded', setTopbarH);
+  window.addEventListener('load', function(){ setTopbarH(); setTimeout(setTopbarH,300); });
+  window.addEventListener('resize', setTopbarH);
+  window.addEventListener('orientationchange', function(){ setTimeout(setTopbarH,200); });
+  if(window.ResizeObserver){ document.addEventListener('DOMContentLoaded', function(){
+    var tb=document.getElementById('topBar'); if(tb) new ResizeObserver(setTopbarH).observe(tb); }); }
+})();
+</script>
 </body>
 </html>
 
