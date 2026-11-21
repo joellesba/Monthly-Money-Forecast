@@ -7817,6 +7817,32 @@ function refreshSafeExtraUI(){
     var tb=document.getElementById('topBar'); if(tb) new ResizeObserver(setTopbarH).observe(tb); }); }
 })();
 </script>
+<script>
+// Remember the open tab so rotating the phone (which reloads the page) returns to the same tab
+(function(){
+  var KEY='mm_lastTab';
+  function save(tab){ try{ localStorage.setItem(KEY, JSON.stringify({tab:tab, ts:Date.now()})); }catch(e){} }
+  var cur = 'dashboard';
+  function install(){
+    var orig = window.showTab;
+    if(typeof orig!=='function' || orig._mm_tabWrapped) return;
+    var w = function(tab){ cur = tab; save(tab); return orig.apply(this, arguments); };
+    w._mm_tabWrapped = true; window.showTab = w;
+  }
+  install();
+  var saved = null;
+  try{ saved = JSON.parse(localStorage.getItem(KEY)||'null'); }catch(e){}
+  // heartbeat: lets a fresh app launch start on the dashboard, but a rotation reload restore the tab
+  setInterval(function(){ save(cur); }, 1000);
+  function restore(){
+    install();
+    if(saved && saved.tab && saved.tab!=='dashboard' && (Date.now()-saved.ts) < 8000){
+      try{ window.showTab(saved.tab); }catch(e){}
+    }
+  }
+  window.addEventListener('load', function(){ setTimeout(restore, 400); setTimeout(restore, 1200); });
+})();
+</script>
 </body>
 </html>
 
