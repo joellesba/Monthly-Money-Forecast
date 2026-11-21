@@ -361,6 +361,14 @@ function _mm_getDebtPlanPaymentDay(){
   ['pointerup','touchend','click'].forEach(ev=>document.addEventListener(ev, goFullscreen, {once:false, passive:true}));
 })();
 </script>
+<style>.mm-restoring #dashboard{display:none !important;}</style>
+<script>
+(function(){ try{ var v=JSON.parse(localStorage.getItem('mm_lastTab')||'null');
+  if(v && v.tab && v.tab!=='dashboard' && (Date.now()-v.ts)<8000){
+    document.documentElement.classList.add('mm-restoring');
+    setTimeout(function(){ document.documentElement.classList.remove('mm-restoring'); }, 2500);
+  } }catch(e){} })();
+</script>
 </head>
 <body class="bg-gray-100 overflow-x-hidden">
 <div class="flex min-h-screen">
@@ -7840,7 +7848,9 @@ function refreshSafeExtraUI(){
       try{ window.showTab(saved.tab); }catch(e){}
     }
   }
-  window.addEventListener('load', function(){ setTimeout(restore, 400); setTimeout(restore, 1200); });
+  function reveal(){ document.documentElement.classList.remove('mm-restoring'); }
+  document.addEventListener('DOMContentLoaded', function(){ setTimeout(function(){ restore(); reveal(); }, 60); });
+  window.addEventListener('load', function(){ setTimeout(function(){ restore(); reveal(); }, 400); });
 })();
 </script>
 </body>
